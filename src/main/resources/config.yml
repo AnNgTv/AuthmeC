@@ -1,0 +1,49 @@
+# AuthMeC Configuration
+# Database type: sqlite, mysql, yaml
+
+# Database Configuration
+database:
+  # Type: sqlite, mysql, or yaml
+  type: sqlite
+  
+  # SQLite Configuration
+  sqlite:
+    file: plugins/AuthMeC/database.db
+  
+  # MySQL Configuration
+  mysql:
+    host: localhost
+    port: 3306
+    database: authsystem
+    username: root
+    password: ""
+  
+  # YAML Configuration
+  yaml:
+    file: plugins/AuthMeC/users.yml
+
+# Security Settings
+security:
+  password-min-length: 6
+  password-require-numbers: false
+  password-require-special: false
+
+# Login Settings
+login:
+  timeout-seconds: 300
+  max-login-attempts: 3
+  kick-unregistered: false
+
+# Messages
+messages:
+  register-success: "&a[AuthMeC] &fAccount created successfully!"
+  register-already-exists: "&c[AuthMeC] &fAccount already exists!"
+  register-password-mismatch: "&c[AuthMeC] &fPasswords do not match!"
+  login-success: "&a[AuthMeC] &fLogged in successfully!"
+  login-failed: "&c[AuthMeC] &fInvalid password!"
+  not-logged-in: "&c[AuthMeC] &fYou must login first! Use /login <password>"
+  already-logged-in: "&c[AuthMeC] &fYou are already logged in!"
+  logout-success: "&a[AuthMeC] &fLogged out successfully!"
+  force-login-success: "&a[AuthMeC] &f{player} has been force logged in!"
+  force-login-not-found: "&c[AuthMeC] &f{player} not found!"
+  no-permission: "&c[AuthMeC] &fYou don't have permission to use this command!"

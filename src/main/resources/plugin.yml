@@ -1,0 +1,22 @@
+name: AuthMeC
+version: 1.0.0
+description: Authentication plugin with SQLite, MySQL, and YAML support
+author: Duong-Solo
+main: com.authsystem.Main
+api-version: "1.20"
+
+commands:
+  register:
+    description: Register a new account
+    usage: /register <password> <password>
+    aliases: [reg]
+  login:
+    description: Login to your account
+    usage: /login <password>
+  logout:
+    description: Logout from your account
+    usage: /logout
+  authmec:
+    description: Admin authentication commands
+    usage: /authmec <subcommand> [args]
+    aliases: [auth]
