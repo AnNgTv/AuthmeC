@@ -25,7 +25,7 @@ A Minecraft authentication plugin with support for SQLite, MySQL, and YAML stora
 | `/register <password> <password>` | Register a new account | - |
 | `/login <password>` | Login to your account | - |
 | `/logout` | Logout from your account | - |
-| `/authmec forcelogin <player>` | Force login a player | `authmec.admin` |
+
 
 ## Configuration
 
