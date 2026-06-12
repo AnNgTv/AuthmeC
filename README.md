@@ -7,7 +7,6 @@ A Minecraft authentication plugin with support for SQLite, MySQL, and YAML stora
 - ✅ User registration and login system
 - ✅ Support for **SQLite** (default), **MySQL**, and **YAML** databases
 - ✅ Secure password hashing with BCrypt
-- ✅ Admin command: `/authmec forcelogin <player>`
 - ✅ Configurable messages and settings
 - ✅ Easy database switching
 
