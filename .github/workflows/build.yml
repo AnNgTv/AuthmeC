@@ -1,4 +1,3 @@
-
 name: AuthMeC Smart CI/CD
 
 on:
@@ -27,7 +26,7 @@ jobs:
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
-          java-version: '17'
+          java-version: "17"
           distribution: temurin
           cache: maven
 
@@ -38,56 +37,65 @@ jobs:
         run: |
           set -euo pipefail
 
-          MESSAGE="$(git log -1 --pretty=%B)"
           CURRENT="$(python3 -c 'import re; s=open("pom.xml").read(); m=re.search(r"<artifactId>AuthMeC</artifactId>\s*<version>([^<]+)</version>", s); print(m.group(1) if m else "")')"
-
-          if [[ -z "$CURRENT" ]]; then
-            echo "Cannot read project version"
+          if [[ ! "$CURRENT" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Invalid project version: $CURRENT"
             exit 1
           fi
 
+          LAST_TAG="$(git tag --merged HEAD --list 'v[0-9]*' --sort=-version:refname | head -n 1)"
+          LAST_VERSION="${LAST_TAG#v}"
+          RELEASE_VERSION=""
           BUMP="none"
 
-          if grep -Eiq 'BREAKING CHANGE:' <<< "$MESSAGE" || grep -Eiq '^[a-z]+(\([^)]*\))?!:' <<< "$MESSAGE"; then
-            BUMP="major"
-          elif grep -Eiq '^feat(\([^)]*\))?:' <<< "$MESSAGE"; then
-            BUMP="minor"
-          elif grep -Eiq '^(fix|perf|refactor)(\([^)]*\))?:' <<< "$MESSAGE"; then
-            BUMP="patch"
+          if [[ -n "$LAST_TAG" ]]; then
+            if [[ "$CURRENT" != "$LAST_VERSION" ]]; then
+              LOWEST="$(printf '%s\n%s\n' "$CURRENT" "$LAST_VERSION" | sort -V | head -n 1)"
+              if [[ "$LOWEST" == "$CURRENT" ]]; then
+                echo "Project version $CURRENT is behind latest tag $LAST_TAG"
+                exit 1
+              fi
+              # A version already advanced in the project files but not yet tagged
+              # is treated as a pending release, not incremented a second time.
+              RELEASE_VERSION="$CURRENT"
+              echo "Detected pending project release: $CURRENT (latest tag: $LAST_TAG)"
+            else
+              RANGE="$LAST_TAG..HEAD"
+              MESSAGES="$(git log "$RANGE" --format=%B)"
+              if grep -Eiq 'BREAKING CHANGE:' <<< "$MESSAGES" || grep -Eiq '^[a-z]+(\([^)]*\))?!:' <<< "$MESSAGES"; then
+                BUMP="major"
+              elif grep -Eiq '^feat(\([^)]*\))?:' <<< "$MESSAGES"; then
+                BUMP="minor"
+              elif grep -Eiq '^(fix|perf|refactor)(\([^)]*\))?:' <<< "$MESSAGES"; then
+                BUMP="patch"
+              fi
+            fi
+          else
+            echo "No previous version tag found; using current project version."
+            RELEASE_VERSION="$CURRENT"
           fi
 
-          if [[ "$BUMP" == "none" ]]; then
+          if [[ -z "$RELEASE_VERSION" && "$BUMP" == "none" ]]; then
             echo "release=false" >> "$GITHUB_OUTPUT"
-            echo "Build only; no version bump."
+            echo "No release-triggering commits since latest tag; build only."
             exit 0
           fi
 
-          IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
+          if [[ -z "$RELEASE_VERSION" ]]; then
+            IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
+            case "$BUMP" in
+              major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
+              minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
+              patch) PATCH=$((PATCH + 1)) ;;
+            esac
+            RELEASE_VERSION="$MAJOR.$MINOR.$PATCH"
 
-          case "$BUMP" in
-            major)
-              MAJOR=$((MAJOR + 1))
-              MINOR=0
-              PATCH=0
-              ;;
-            minor)
-              MINOR=$((MINOR + 1))
-              PATCH=0
-              ;;
-            patch)
-              PATCH=$((PATCH + 1))
-              ;;
-          esac
-
-          NEXT="$MAJOR.$MINOR.$PATCH"
-
-          python3 - "$CURRENT" "$NEXT" <<'PY'
+            python3 - "$CURRENT" "$RELEASE_VERSION" <<'PY'
           import pathlib
           import re
           import sys
 
           old, new = sys.argv[1:]
-
           pom = pathlib.Path("pom.xml")
           text = pom.read_text()
           pattern = (
@@ -96,33 +104,33 @@ jobs:
               + r'(</version>)'
           )
           updated, count = re.subn(
-              pattern,
-              lambda m: m.group(1) + new + m.group(2),
-              text,
-              count=1
+              pattern, lambda m: m.group(1) + new + m.group(2), text, count=1
           )
           if count != 1:
-              raise SystemExit("Cannot update pom.xml")
+              raise SystemExit("Could not update pom.xml project version")
           pom.write_text(updated)
 
           plugin = pathlib.Path("src/main/resources/plugin.yml")
           text = plugin.read_text()
           updated, count = re.subn(
               r'(?m)^version:[ \t]*' + re.escape(old) + r'[ \t]*$',
-              'version: ' + new,
-              text,
-              count=1
+              'version: ' + new, text, count=1
           )
           if count != 1:
-              raise SystemExit("Cannot update plugin.yml")
+              raise SystemExit("Could not update plugin.yml version")
           plugin.write_text(updated)
           PY
+          fi
+
+          if git rev-parse -q --verify "refs/tags/v$RELEASE_VERSION" >/dev/null; then
+            echo "Tag v$RELEASE_VERSION already exists; refusing duplicate release."
+            exit 1
+          fi
 
           echo "release=true" >> "$GITHUB_OUTPUT"
-          echo "new_version=$NEXT" >> "$GITHUB_OUTPUT"
-          echo "new_tag=v$NEXT" >> "$GITHUB_OUTPUT"
-
-          echo "Version: $CURRENT -> $NEXT ($BUMP)"
+          echo "new_version=$RELEASE_VERSION" >> "$GITHUB_OUTPUT"
+          echo "new_tag=v$RELEASE_VERSION" >> "$GITHUB_OUTPUT"
+          echo "Release selected: v$RELEASE_VERSION (bump: $BUMP)"
 
       - name: Build with Maven
         run: mvn -B clean package --file pom.xml
@@ -141,15 +149,15 @@ jobs:
           NEW_TAG: ${{ steps.version.outputs.new_tag }}
         run: |
           set -euo pipefail
-
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           git add pom.xml src/main/resources/plugin.yml
-          git commit -m "chore(release): ${NEW_VERSION} [skip ci]"
+          if ! git diff --cached --quiet; then
+            git commit -m "chore(release): ${NEW_VERSION} [skip ci]"
+          fi
 
           git tag -a "$NEW_TAG" -m "AuthMeC $NEW_VERSION"
-
           git push origin HEAD:main
           git push origin "$NEW_TAG"
 
