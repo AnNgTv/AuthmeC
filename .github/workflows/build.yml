@@ -1,44 +1,167 @@
-name: Java CI with Maven and Release
+
+name: AuthMeC Smart CI/CD
 
 on:
   push:
-    branches: [ "main" ]
-    tags:
-      - 'v*' # Trigger on version tags (e.g., v1.0.0)
+    branches: ["main"]
   pull_request:
-    branches: [ "main" ]
+    branches: ["main"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: authmec-cicd-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  build:
+  build-and-release:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
 
     steps:
-    - uses: actions/checkout@v4
-    
-    - name: Set up JDK 8
-      uses: actions/setup-java@v4
-      with:
-        java-version: '17'
-        distribution: 'temurin'
-        cache: maven
-        
-    - name: Build with Maven
-      run: mvn -B package --file pom.xml
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-    - name: Upload Artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: AuthMeC-JAR
-        path: target/*.jar
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: temurin
+          cache: maven
 
-    - name: Create Release
-      if: startsWith(github.ref, 'refs/tags/')
-      uses: softprops/action-gh-release@v2
-      with:
-        files: target/AuthMeC-*.jar
-        draft: false
-        prerelease: false
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Calculate smart version
+        id: version
+        if: github.event_name == 'push'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          MESSAGE="$(git log -1 --pretty=%B)"
+          CURRENT="$(python3 -c 'import re; s=open("pom.xml").read(); m=re.search(r"<artifactId>AuthMeC</artifactId>\s*<version>([^<]+)</version>", s); print(m.group(1) if m else "")')"
+
+          if [[ -z "$CURRENT" ]]; then
+            echo "Cannot read project version"
+            exit 1
+          fi
+
+          BUMP="none"
+
+          if grep -Eiq 'BREAKING CHANGE:' <<< "$MESSAGE" || grep -Eiq '^[a-z]+(\([^)]*\))?!:' <<< "$MESSAGE"; then
+            BUMP="major"
+          elif grep -Eiq '^feat(\([^)]*\))?:' <<< "$MESSAGE"; then
+            BUMP="minor"
+          elif grep -Eiq '^(fix|perf|refactor)(\([^)]*\))?:' <<< "$MESSAGE"; then
+            BUMP="patch"
+          fi
+
+          if [[ "$BUMP" == "none" ]]; then
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            echo "Build only; no version bump."
+            exit 0
+          fi
+
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
+
+          case "$BUMP" in
+            major)
+              MAJOR=$((MAJOR + 1))
+              MINOR=0
+              PATCH=0
+              ;;
+            minor)
+              MINOR=$((MINOR + 1))
+              PATCH=0
+              ;;
+            patch)
+              PATCH=$((PATCH + 1))
+              ;;
+          esac
+
+          NEXT="$MAJOR.$MINOR.$PATCH"
+
+          python3 - "$CURRENT" "$NEXT" <<'PY'
+          import pathlib
+          import re
+          import sys
+
+          old, new = sys.argv[1:]
+
+          pom = pathlib.Path("pom.xml")
+          text = pom.read_text()
+          pattern = (
+              r'(<artifactId>AuthMeC</artifactId>\s*<version>)'
+              + re.escape(old)
+              + r'(</version>)'
+          )
+          updated, count = re.subn(
+              pattern,
+              lambda m: m.group(1) + new + m.group(2),
+              text,
+              count=1
+          )
+          if count != 1:
+              raise SystemExit("Cannot update pom.xml")
+          pom.write_text(updated)
+
+          plugin = pathlib.Path("src/main/resources/plugin.yml")
+          text = plugin.read_text()
+          updated, count = re.subn(
+              r'(?m)^version:[ \t]*' + re.escape(old) + r'[ \t]*$',
+              'version: ' + new,
+              text,
+              count=1
+          )
+          if count != 1:
+              raise SystemExit("Cannot update plugin.yml")
+          plugin.write_text(updated)
+          PY
+
+          echo "release=true" >> "$GITHUB_OUTPUT"
+          echo "new_version=$NEXT" >> "$GITHUB_OUTPUT"
+          echo "new_tag=v$NEXT" >> "$GITHUB_OUTPUT"
+
+          echo "Version: $CURRENT -> $NEXT ($BUMP)"
+
+      - name: Build with Maven
+        run: mvn -B clean package --file pom.xml
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AuthMeC-JAR
+          path: target/AuthMeC-*.jar
+          if-no-files-found: error
+
+      - name: Commit version and create tag
+        if: github.event_name == 'push' && steps.version.outputs.release == 'true'
+        env:
+          NEW_VERSION: ${{ steps.version.outputs.new_version }}
+          NEW_TAG: ${{ steps.version.outputs.new_tag }}
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add pom.xml src/main/resources/plugin.yml
+          git commit -m "chore(release): ${NEW_VERSION} [skip ci]"
+
+          git tag -a "$NEW_TAG" -m "AuthMeC $NEW_VERSION"
+
+          git push origin HEAD:main
+          git push origin "$NEW_TAG"
+
+      - name: Publish GitHub Release
+        if: github.event_name == 'push' && steps.version.outputs.release == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.new_tag }}
+          name: AuthMeC ${{ steps.version.outputs.new_version }}
+          files: target/AuthMeC-*.jar
+          generate_release_notes: true
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
