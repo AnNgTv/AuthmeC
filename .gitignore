@@ -1,0 +1,14 @@
+target/
+dependency-reduced-pom.xml
+*.db
+*.sqlite
+*.sqlite3
+users.yml
+logs/
+.env
+.env.*
+*.pem
+*.key
+.idea/
+.vscode/
+*.iml
